@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SQL Execution Plan Visualizer</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+  <script>
+    async function fetchOptimizedSQL() {
+      const query1 = document.querySelector("textarea[name='query1']").value;
+      const spinner = document.getElementById("spinner");
+      const button = document.getElementById("optimizeBtn");
+      
+      if (!query1.trim()) {
+        alert("Please enter a query to optimize");
+        return;
+      }
+
+      spinner.style.display = "inline-block";
+      button.disabled = true;
+      button.classList.add("button-disabled");
+
+      try {
+        const response = await fetch("/stream_optimize", {
+          method: "POST",
+          body: new URLSearchParams({ query1 }),
+          headers: { "Content-Type": "application/x-www-form-urlencoded" }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        document.querySelector("textarea[name='query2']").value = data.optimized_sql;
+      } catch (error) {
+        alert("Error fetching optimization: " + error.message);
+        console.error(error);
+      } finally {
+        spinner.style.display = "none";
+        button.disabled = false;
+        button.classList.remove("button-disabled");
+      }
+    }
+  </script>
+  <script>
+    {% if result1 %}
+    document.addEventListener('DOMContentLoaded', function() {
+        const ctx = document.getElementById('timeComparisonChart').getContext('2d');
+        Chart.register(ChartDataLabels);  // Register the plugin
+        
+        const timing1 = {{ timing_data1|tojson }};
+        const timing2 = {{ timing_data2|tojson }};
+        
+        const nodeTypes = [...new Set([...Object.keys(timing1), ...Object.keys(timing2)])];
+        
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: nodeTypes,
+                datasets: [
+                    {
+                        label: 'Query 1',
+                        data: nodeTypes.map(type => timing1[type] || 0),
+                        backgroundColor: '#0af',
+                        barPercentage: 0.8,
+                    },
+                    {
+                        label: 'Query 2',
+                        data: nodeTypes.map(type => timing2[type] || 0),
+                        backgroundColor: '#06c',
+                        barPercentage: 0.8,
+                    }
+                ]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: '#eee',
+                            font: {
+                                size: 12
+                            }
+                        }
+                    },
+                    datalabels: {
+                        color: '#eee',
+                        anchor: 'end',
+                        align: 'right',
+                        offset: 4,
+                        formatter: function(value) {
+                            return value.toFixed(2) + ' ms';
+                        },
+                        font: {
+                            size: 11,
+                            weight: 'bold'
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: '#222',
+                        titleColor: '#0af',
+                        bodyColor: '#eee',
+                        cornerRadius: 4,
+                        displayColors: true
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            color: '#333'
+                        },
+                        ticks: {
+                            color: '#eee'
+                        }
+                    },
+                    y: {
+                        grid: {
+                            color: '#333'
+                        },
+                        ticks: {
+                            color: '#eee',
+                            font: {
+                                size: 11
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    });
+    {% endif %}
+  </script>
+</head>
+<body>
+  <h1>SQL Execution Plan Visualizer</h1>
+
+  <form method="POST">
+    <div class="container">
+      <div class="column">
+        <h3>Query 1</h3>
+        <textarea name="query1">{{ query1 }}</textarea>
+      </div>
+      <div class="column">
+        <h3>Query 2</h3>
+        <textarea name="query2">{{ query2 }}</textarea>
+      </div>
+    </div>
+    <button name="compare" type="submit">Compare Plans</button>
+    <button id="optimizeBtn" type="button" onclick="fetchOptimizedSQL()">
+      Suggest Optimization
+      <span class="loading-spinner" id="spinner"></span>
+    </button>
+  </form>
+
+  {% if output_match is not none %}
+    <div class="output-check">
+      <h3>Output Match Check</h3>
+      {% if output_match == True %}
+        <p style="color: green;"><strong>✔ The queries return the same result.</strong></p>
+      {% elif output_match == False %}
+        <p style="color: red;"><strong>✘ The queries return different results.</strong></p>
+      {% else %}
+        <p style="color: orange;"><strong>⚠ {{ output_match }}</strong></p>
+      {% endif %}
+    </div>
+
+    <div class="container">
+      <div class="column">
+        <h4>Query 1: First 20 Rows</h4>
+        <pre>{{ query1_rows[:20] }}</pre>
+      </div>
+      <div class="column">
+        <h4>Query 2: First 20 Rows</h4>
+        <pre>{{ query2_rows[:20] }}</pre>
+      </div>
+    </div>
+  {% endif %}
+
+  {% if result1 %}
+    <div class="full-width">
+        <h4>Execution Time Comparison</h4>
+        <div class="chart-container">
+            <canvas id="timeComparisonChart"></canvas>
+        </div>
+    </div>
+    <div class="container">
+      <div class="column">
+        <h4>Summary: Query 1</h4>
+        <div class="summary">
+          {% for key, value in summary1.items() %}
+            <p><strong>{{ key }}:</strong> {{ value }}</p>
+          {% endfor %}
+        </div>
+        <h4>Visual Plan</h4>
+        <div class="visual-plan">
+            {{ diagram1|safe }}
+        </div>
+        <h4>Full JSON Plan</h4>
+        <pre>{{ result1 }}</pre>
+      </div>
+
+      <div class="column">
+        <h4>Summary: Query 2</h4>
+        <div class="summary">
+          {% for key, value in summary2.items() %}
+            <p><strong>{{ key }}:</strong> {{ value }}</p>
+          {% endfor %}
+        </div>
+        <h4>Visual Plan</h4>
+        <div class="visual-plan">
+            {{ diagram2|safe }}
+        </div>
+        <h4>Full JSON Plan</h4>
+        <pre>{{ result2 }}</pre>
+      </div>
+    </div>
+  {% endif %}
+</body>
+</html>
